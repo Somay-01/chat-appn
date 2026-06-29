@@ -1,14 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Check, X, ShieldCheck, UserCheck, KeyRound, Users } from 'lucide-react';
+import { Check, X, ShieldCheck, UserCheck, KeyRound, Users, UserCog, Pencil, Save, Trash2 } from 'lucide-react';
 
 function AdminDashboard({ API_BASE, onClose, currentUser }) {
-    // Tab State: 'pending' or 'approved'
+    // Tab State: 'pending', 'approved', or 'directory'
     const [activeTab, setActiveTab] = useState('pending');
 
     // Data States
     const [pendingUsers, setPendingUsers] = useState([]);
     const [approvedUsers, setApprovedUsers] = useState([]);
+    const [allWorkspaceUsers, setAllWorkspaceUsers] = useState([]); // NEW: For the directory tab
     const [loading, setLoading] = useState(true);
+
+    // Editing States for Designation
+    const [editingUserId, setEditingUserId] = useState(null);
+    const [editDesignationText, setEditDesignationText] = useState("");
 
     useEffect(() => {
         fetchAllUsers();
@@ -17,12 +22,12 @@ function AdminDashboard({ API_BASE, onClose, currentUser }) {
     const fetchAllUsers = async () => {
         setLoading(true);
         try {
-            // Fetch Pending
+            // 1. Fetch Pending
             const pendingRes = await fetch(`${API_BASE}/fetchPendingUsers.php`);
             const pendingData = await pendingRes.json();
             if (pendingData.status === 'success') setPendingUsers(pendingData.data || []);
 
-            // Fetch Approved
+            // 2. Fetch Approved
             const approvedRes = await fetch(`${API_BASE}/fetchApprovedUsers.php`);
             const approvedData = await approvedRes.json();
 
@@ -34,6 +39,15 @@ function AdminDashboard({ API_BASE, onClose, currentUser }) {
                 setApprovedUsers(otherStaff || []);
             }
 
+            // 3. Fetch All Users for Directory (Designations & Deletions)
+            const directoryRes = await fetch(`${API_BASE}/adminFetchAllUsers.php`);
+            const directoryData = await directoryRes.json();
+            if (Array.isArray(directoryData)) {
+                // Prevent admin from deleting themselves
+                const safeDirectory = directoryData.filter(user => String(user.id) !== String(currentUser?.id));
+                setAllWorkspaceUsers(safeDirectory);
+            }
+
         } catch (err) {
             console.error("Failed to fetch users:", err);
         } finally {
@@ -41,6 +55,7 @@ function AdminDashboard({ API_BASE, onClose, currentUser }) {
         }
     };
 
+    // --- PENDING APPROVALS TAB ---
     const handleApprove = async (id) => {
         const formData = new FormData();
         formData.append('user_id', id);
@@ -55,6 +70,7 @@ function AdminDashboard({ API_BASE, onClose, currentUser }) {
         }
     };
 
+    // --- MANAGE STAFF TAB ---
     const handleResetPassword = async (id, name) => {
         if (!window.confirm(`Are you sure you want to reset the password for ${name}?`)) return;
 
@@ -74,7 +90,6 @@ function AdminDashboard({ API_BASE, onClose, currentUser }) {
         }
     };
 
-    // NEW: Handle Global Role Change safely merged into your dashboard
     const handleRoleChange = async (targetId, newRole) => {
         const formData = new FormData();
         formData.append('admin_id', currentUser.id);
@@ -92,6 +107,40 @@ function AdminDashboard({ API_BASE, onClose, currentUser }) {
         } catch (err) {
             console.error(err);
         }
+    };
+
+    // --- NEW: USER DIRECTORY TAB (Designation & Deletion) ---
+    const handleSaveDesignation = async (id) => {
+        const formData = new FormData();
+        formData.append('user_id', id);
+        formData.append('designation', editDesignationText);
+
+        try {
+            const res = await fetch(`${API_BASE}/adminUpdateDesignation.php`, { method: 'POST', body: formData });
+            const data = await res.json();
+            if (data.status === 'success') {
+                setEditingUserId(null); // Close the input field
+                fetchAllUsers(); // Refresh the list to show new designation
+            } else {
+                alert("Error: " + data.message);
+            }
+        } catch (err) { console.error(err); }
+    };
+
+    const handleDeleteUser = async (id, name) => {
+        if (!window.confirm(`⚠️ WARNING: Are you sure you want to COMPLETELY REMOVE ${name} from the system? This action cannot be undone.`)) return;
+
+        const formData = new FormData();
+        formData.append('user_id', id);
+        try {
+            const res = await fetch(`${API_BASE}/adminDeleteUser.php`, { method: 'POST', body: formData });
+            const data = await res.json();
+            if (data.status === 'success') {
+                fetchAllUsers();
+            } else {
+                alert("Error: " + data.message);
+            }
+        } catch (err) { console.error(err); }
     };
 
     return (
@@ -120,6 +169,13 @@ function AdminDashboard({ API_BASE, onClose, currentUser }) {
                     >
                         <Users size={16} /> Manage Staff ({approvedUsers.length})
                     </button>
+                    {/* NEW TAB BUTTON */}
+                    <button
+                        style={activeTab === 'directory' ? activeTabStyle : tabStyle}
+                        onClick={() => setActiveTab('directory')}
+                    >
+                        <UserCog size={16} /> User Directory
+                    </button>
                 </div>
 
                 {/* CONTENT */}
@@ -131,13 +187,13 @@ function AdminDashboard({ API_BASE, onClose, currentUser }) {
                             <thead>
                                 <tr style={{ borderBottom: '2px solid #f1f5f9', textAlign: 'left' }}>
                                     <th style={thStyle}>Employee</th>
-                                    <th style={thStyle}>Biometric ID</th>
-                                    <th style={thStyle}>Role / Designation</th>
+                                    <th style={thStyle}>{activeTab === 'directory' ? 'Designation' : 'Biometric ID'}</th>
+                                    <th style={thStyle}>{activeTab === 'directory' ? 'Status' : 'Role / Designation'}</th>
                                     <th style={thStyle}>Action</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {/* PENDING TAB RENDER */}
+                                {/* --- PENDING TAB RENDER --- */}
                                 {activeTab === 'pending' && pendingUsers.map(user => (
                                     <tr key={user.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                         <td style={tdStyle}><div style={{ fontWeight: '600' }}>{user.name}</div></td>
@@ -154,23 +210,12 @@ function AdminDashboard({ API_BASE, onClose, currentUser }) {
                                     </tr>
                                 ))}
 
-                                {/* PENDING EMPTY STATE */}
-                                {activeTab === 'pending' && pendingUsers.length === 0 && (
-                                    <tr>
-                                        <td colSpan="4" style={{ textAlign: 'center', padding: '30px', color: '#64748b' }}>
-                                            No pending requests at this time.
-                                        </td>
-                                    </tr>
-                                )}
-
-                                {/* APPROVED TAB RENDER */}
+                                {/* --- APPROVED TAB RENDER --- */}
                                 {activeTab === 'approved' && approvedUsers.map(user => (
                                     <tr key={user.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                         <td style={tdStyle}><div style={{ fontWeight: '600' }}>{user.name}</div></td>
                                         <td style={tdStyle}>{user.biometric_id}</td>
-
                                         <td style={tdStyle}>
-                                            {/* Merged Global Admin Dropdown */}
                                             <select
                                                 value={user.role?.toLowerCase() || 'user'}
                                                 onChange={(e) => handleRoleChange(user.id, e.target.value)}
@@ -181,7 +226,6 @@ function AdminDashboard({ API_BASE, onClose, currentUser }) {
                                             </select>
                                             <div style={{ fontSize: '12px', color: '#64748b' }}>{user.designation}</div>
                                         </td>
-
                                         <td style={tdStyle}>
                                             <button onClick={() => handleResetPassword(user.id, user.name)} style={resetBtnStyle}>
                                                 <KeyRound size={14} /> Reset Password
@@ -190,11 +234,66 @@ function AdminDashboard({ API_BASE, onClose, currentUser }) {
                                     </tr>
                                 ))}
 
-                                {/* APPROVED EMPTY STATE */}
+                                {/* --- NEW: DIRECTORY TAB RENDER --- */}
+                                {activeTab === 'directory' && allWorkspaceUsers.map(user => (
+                                    <tr key={user.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                        <td style={tdStyle}>
+                                            <div style={{ fontWeight: '600' }}>{user.name}</div>
+                                            <div style={{ fontSize: '12px', color: '#64748b' }}>ID: {user.biometric_id}</div>
+                                        </td>
+                                        <td style={tdStyle}>
+                                            {/* Inline Designation Editing */}
+                                            {editingUserId === user.id ? (
+                                                <div style={{ display: 'flex', gap: '5px' }}>
+                                                    <input
+                                                        type="text"
+                                                        value={editDesignationText}
+                                                        onChange={(e) => setEditDesignationText(e.target.value)}
+                                                        style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '13px', outline: 'none', width: '120px' }}
+                                                        autoFocus
+                                                    />
+                                                    <button onClick={() => handleSaveDesignation(user.id)} style={{ background: '#10b981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }} title="Save"><Save size={14} /></button>
+                                                    <button onClick={() => setEditingUserId(null)} style={{ background: '#cbd5e1', color: '#334155', border: 'none', borderRadius: '4px', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }} title="Cancel"><X size={14} /></button>
+                                                </div>
+                                            ) : (
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                    <span style={{ fontSize: '13px', color: '#334155', fontWeight: '500' }}>{user.designation || 'None'}</span>
+                                                    <Pencil size={12} color="#94a3b8" style={{ cursor: 'pointer' }} onClick={() => { setEditingUserId(user.id); setEditDesignationText(user.designation || ""); }} title="Edit Designation" />
+                                                </div>
+                                            )}
+                                        </td>
+                                        <td style={tdStyle}>
+                                            <span style={{ fontSize: '11px', fontWeight: 'bold', padding: '4px 8px', borderRadius: '12px', background: user.status === 'approved' ? '#dcfce7' : '#fef9c3', color: user.status === 'approved' ? '#166534' : '#854d0e' }}>
+                                                {user.status === 'approved' ? 'Approved' : 'Pending'}
+                                            </span>
+                                        </td>
+                                        <td style={tdStyle}>
+                                            <button onClick={() => handleDeleteUser(user.id, user.name)} style={{ background: '#fee2e2', color: '#ef4444', border: 'none', padding: '8px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="Delete User">
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+
+                                {/* EMPTY STATES */}
+                                {activeTab === 'pending' && pendingUsers.length === 0 && (
+                                    <tr>
+                                        <td colSpan="4" style={{ textAlign: 'center', padding: '30px', color: '#64748b' }}>
+                                            No pending requests at this time.
+                                        </td>
+                                    </tr>
+                                )}
                                 {activeTab === 'approved' && approvedUsers.length === 0 && (
                                     <tr>
                                         <td colSpan="4" style={{ textAlign: 'center', padding: '30px', color: '#64748b' }}>
                                             No other staff members found.
+                                        </td>
+                                    </tr>
+                                )}
+                                {activeTab === 'directory' && allWorkspaceUsers.length === 0 && (
+                                    <tr>
+                                        <td colSpan="4" style={{ textAlign: 'center', padding: '30px', color: '#64748b' }}>
+                                            No users in the directory.
                                         </td>
                                     </tr>
                                 )}
